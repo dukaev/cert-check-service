@@ -20,3 +20,13 @@ import (
 type Store interface {
 	Get(ctx context.Context, caID uint16, serial []byte) (model.Certificate, error)
 }
+
+// Readier exposes a readiness probe that handlers can call from /readyz.
+//
+// Liveness (process is alive) ≠ readiness (process can serve traffic). Phase 1
+// MemoryStore is always ready (in-process map), but the Postgres-backed
+// implementation in Phase 2 must Ping the database before declaring readiness;
+// otherwise k8s would route traffic to pods whose backing storage is down.
+type Readier interface {
+	Ping(ctx context.Context) error
+}

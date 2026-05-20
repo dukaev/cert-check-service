@@ -14,7 +14,10 @@ import (
 	"github.com/dukaev/cert-check-service/internal/storage"
 )
 
-const shutdownTimeout = 10 * time.Second
+const (
+	shutdownTimeout = 10 * time.Second
+	maxHeaderBytes  = 4 * 1024 // 4 KB — defends against header-spam DoS
+)
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
@@ -31,18 +34,22 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		// Liveness: process is alive. Always 200 — do NOT include backend checks here,
+		// otherwise a Redis blip would kill the pod instead of marking it not-ready.
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.HandleFunc("GET /readyz", h.Ready)
 	mux.HandleFunc("GET /api/v1/check", h.Check)
 
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           handler.AccessLog(logger, "/healthz")(mux),
+		Handler:           handler.WithRequestID(handler.AccessLog(logger, "/healthz", "/readyz")(mux)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    maxHeaderBytes,
 	}
 
 	// Signal-driven graceful shutdown.
