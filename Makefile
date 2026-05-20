@@ -20,8 +20,8 @@ test: ## Run unit + property + contract tests with the race detector.
 	$(GO) test -race -timeout=2m ./...
 
 .PHONY: cover
-cover: ## Run tests with coverage profile (writes coverage.out).
-	$(GO) test -race -coverprofile=coverage.out -covermode=atomic ./...
+cover: ## Run tests with coverage profile over ./internal/... (writes coverage.out).
+	$(GO) test -race -coverprofile=coverage.out -covermode=atomic -coverpkg=./internal/... ./...
 	$(GO) tool cover -func=coverage.out | tail -1
 
 .PHONY: bench
