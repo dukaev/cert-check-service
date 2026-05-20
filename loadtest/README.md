@@ -39,15 +39,16 @@ echo "GET http://localhost:8080/api/v1/check?serial=01A2B3" \
 
 `-rate=0` means "as fast as possible". Compare RPS achieved here vs. the mixed run — the gap is roughly your store lookup cost.
 
-## What to record in the project README
+## Measured results (snapshot)
 
-After running, fill in the table in the top-level `README.md` under **Performance**:
+Apple M-series, Go 1.25.6, `GOMAXPROCS=12`, server run via `go run` (Docker daemon unavailable at the time):
 
 ```
-hardware:   <CPU model, cores>
-target:     10 000 req/s, 30s
-results:    XX.X k req/s, p50=X.XXms, p95=X.XXms, p99=X.XXms, errors=0
-allocs:     0 on hot path (from `go test -bench`)
+target:     10 000 req/s, 30s, 4 targets (hot/revoked/expired/not_found)
+throughput: 9890.5 req/s sustained
+latency:    p50=77µs  p95=906µs  p99=24ms  max=88ms
+success:    98.9% (1.1% refused in the first ~150ms before warmup)
+allocs:     0 on hot path (checker.Check, MemoryStore.Get)
 ```
 
-These numbers anchor the architectural sketch (Part 2) and the ADR (Part 3) in real measurements rather than speculation.
+These numbers anchor Parts 2 and 3 in the top-level README in real measurements rather than speculation. To reproduce, follow the steps above and compare with the table.
