@@ -1,39 +1,51 @@
 package storage
 
 import (
+	"context"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dukaev/cert-check-service/internal/model"
 )
 
+// memKey composites (caID, serial) into the in-memory map key.
+// Serial is upper-cased for case-insensitive lookup.
+type memKey struct {
+	caID   uint16
+	serial string
+}
+
 // MemoryStore is an in-memory Store backed by a map + RWMutex.
-// Production replacements (Postgres, Redis) should implement the same Store interface.
+// Production replacements (Postgres) implement the same Store interface.
 type MemoryStore struct {
 	mu   sync.RWMutex
-	data map[string]model.Certificate
+	data map[memKey]model.Certificate
 }
 
 func NewMemoryStore() *MemoryStore {
-	return &MemoryStore{data: make(map[string]model.Certificate)}
+	return &MemoryStore{data: make(map[memKey]model.Certificate)}
 }
 
-// Put inserts/updates a certificate. Serial is stored as-is — callers should normalize case.
+// Put inserts/updates a certificate. Idempotent on (CaID, Serial).
 func (s *MemoryStore) Put(c model.Certificate) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[c.Serial] = c
+	s.data[memKey{caID: c.CaID, serial: strings.ToUpper(c.Serial)}] = c
 }
 
-// Get is the hot path — should be zero-allocation.
+// Get is the hot path — must be zero-allocation.
 //
 // TODO(part-1): implement.
-func (s *MemoryStore) Get(serial string) (model.Certificate, bool) {
-	return model.Certificate{}, false
+func (s *MemoryStore) Get(ctx context.Context, caID uint16, serial string) (model.Certificate, error) {
+	_ = ctx // unused until real I/O is added
+	_ = caID
+	_ = serial
+	return model.Certificate{}, ErrNotFound
 }
 
-// Seed populates a few hard-coded certificates for local development.
-// TODO(part-1): add realistic fixtures (valid, expired, revoked, future).
+// Seed populates hard-coded certificates for local development.
+// TODO(part-1): expand fixtures (valid, expired, revoked, future).
 func (s *MemoryStore) Seed() {
 	now := time.Now().UTC()
 	revoked := now.Add(-24 * time.Hour)

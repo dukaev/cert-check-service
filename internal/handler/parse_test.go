@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -24,7 +25,8 @@ func TestParseSerial(t *testing.T) {
 		{"odd length", "1A2", "", true},
 		{"lowercase normalized to upper", "01a2b3", "01A2B3", false},
 		{"uppercase preserved", "01A2B3", "01A2B3", false},
-		{"long hex", "abcdef0123456789", "ABCDEF0123456789", false},
+		{"long hex (typical X.509: 40 chars)", strings.Repeat("AB", 20), strings.Repeat("AB", 20), false},
+		{"very long hex must not panic", strings.Repeat("a", 4096), strings.Repeat("A", 4096), false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -76,6 +78,12 @@ func TestParseAt(t *testing.T) {
 		_, err := parseAt("2026-01-01T00:00:00+03:00", clock)
 		if err != nil {
 			t.Errorf("want nil err for +03:00, got %v", err)
+		}
+	})
+
+	t.Run("missing timezone is rejected (RFC3339 requires TZ)", func(t *testing.T) {
+		if _, err := parseAt("2026-01-01T00:00:00", clock); err == nil {
+			t.Error("expected error for timestamp without TZ")
 		}
 	})
 

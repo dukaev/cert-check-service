@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dukaev/cert-check-service/internal/checker"
 	"github.com/dukaev/cert-check-service/internal/handler"
 	"github.com/dukaev/cert-check-service/internal/model"
+	"github.com/dukaev/cert-check-service/internal/storage"
 )
 
 // fakeStore is a deterministic in-memory Store for handler tests.
@@ -19,9 +21,12 @@ type fakeStore struct {
 	data map[string]model.Certificate
 }
 
-func (s *fakeStore) Get(serial string) (model.Certificate, bool) {
+func (s *fakeStore) Get(_ context.Context, _ uint16, serial string) (model.Certificate, error) {
 	c, ok := s.data[strings.ToUpper(serial)]
-	return c, ok
+	if !ok {
+		return model.Certificate{}, storage.ErrNotFound
+	}
+	return c, nil
 }
 
 type fixedClock struct{ t time.Time }
@@ -83,8 +88,8 @@ func TestCheck_NotFound_Returns200(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
 	}
-	if resp.Valid || resp.Reason != "not_found" {
-		t.Errorf("response = %+v, want valid=false reason=not_found", resp)
+	if resp.Valid || resp.Reason != checker.ReasonNotFound {
+		t.Errorf("response = %+v, want valid=false reason=%s", resp, checker.ReasonNotFound)
 	}
 	if resp.Serial != "BADC0FFEE" {
 		t.Errorf("serial in response = %q, want it echoed even on not_found", resp.Serial)
@@ -95,8 +100,8 @@ func TestCheck_Revoked(t *testing.T) {
 	mux := newTestMux(t)
 	at := revokedAt.Add(time.Hour).Format(time.RFC3339)
 	_, resp := do(t, mux, "/api/v1/check?serial=DEADBEEF&at="+at)
-	if resp.Valid || resp.Reason != "revoked" {
-		t.Errorf("response = %+v, want valid=false reason=revoked", resp)
+	if resp.Valid || resp.Reason != checker.ReasonRevoked {
+		t.Errorf("response = %+v, want valid=false reason=%s", resp, checker.ReasonRevoked)
 	}
 }
 
@@ -104,8 +109,8 @@ func TestCheck_Expired(t *testing.T) {
 	mux := newTestMux(t)
 	at := notAfter.Add(time.Hour).Format(time.RFC3339)
 	_, resp := do(t, mux, "/api/v1/check?serial=01A2B3&at="+at)
-	if resp.Valid || resp.Reason != "expired" {
-		t.Errorf("response = %+v, want valid=false reason=expired", resp)
+	if resp.Valid || resp.Reason != checker.ReasonExpired {
+		t.Errorf("response = %+v, want valid=false reason=%s", resp, checker.ReasonExpired)
 	}
 }
 

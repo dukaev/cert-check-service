@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -20,12 +21,13 @@ func BenchmarkMemoryStore_Get(b *testing.B) {
 			NotAfter:  time.Now().Add(time.Hour),
 		})
 	}
+	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			_, _ = s.Get(strconv.Itoa(i % 100_000))
+			_, _ = s.Get(ctx, 0, strconv.Itoa(i%100_000))
 			i++
 		}
 	})

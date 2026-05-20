@@ -35,6 +35,7 @@ type Response struct {
 
 // parsedRequest holds the validated query parameters.
 type parsedRequest struct {
+	caID   uint16
 	serial string
 	at     time.Time
 }
@@ -42,7 +43,8 @@ type parsedRequest struct {
 // Check handles GET /api/v1/check.
 // TODO(part-1): implement.
 func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
-	_, _ = parseRequest(r, h.Clock)
+	req, _ := parseRequest(r, h.Clock)
+	_, _ = h.Store.Get(r.Context(), req.caID, req.serial)
 	writeJSON(w, http.StatusNotImplemented, Response{Reason: "TODO"})
 }
 
@@ -51,7 +53,7 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 func parseRequest(r *http.Request, clock Clock) (parsedRequest, error) {
 	serial, _ := parseSerial(r.URL.Query().Get("serial"))
 	at, _ := parseAt(r.URL.Query().Get("at"), clock)
-	return parsedRequest{serial: serial, at: at}, errors.New("TODO")
+	return parsedRequest{caID: 0, serial: serial, at: at}, errors.New("TODO")
 }
 
 // parseSerial validates a hex serial number.
