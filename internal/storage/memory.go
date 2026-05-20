@@ -29,14 +29,18 @@ func NewMemoryStore() *MemoryStore {
 }
 
 // Put inserts/updates a certificate. Idempotent on (CaID, Serial).
+// The certificate is copied so subsequent caller mutations don't corrupt the store.
 func (s *MemoryStore) Put(c model.Certificate) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.data[memKey{caID: c.CaID, serial: string(c.Serial)}] = c
+	s.data[memKey{caID: c.CaID, serial: string(c.Serial)}] = cloneCert(c)
 }
 
 // Get returns the certificate or ErrNotFound. ctx is honored for cancellation
 // to keep the contract identical to a Postgres-backed implementation.
+//
+// The returned Certificate is a defensive copy — callers cannot mutate the
+// underlying RevokedAt pointer and corrupt the store.
 func (s *MemoryStore) Get(ctx context.Context, caID uint16, serial []byte) (model.Certificate, error) {
 	if err := ctx.Err(); err != nil {
 		return model.Certificate{}, err
@@ -47,7 +51,14 @@ func (s *MemoryStore) Get(ctx context.Context, caID uint16, serial []byte) (mode
 	if !ok {
 		return model.Certificate{}, ErrNotFound
 	}
-	return c, nil
+	return cloneCert(c), nil
+}
+
+// Ping satisfies storage.Readier — MemoryStore is always ready as long as
+// the process is alive. The Postgres-backed implementation will use ctx
+// to actually query SELECT 1.
+func (s *MemoryStore) Ping(ctx context.Context) error {
+	return ctx.Err()
 }
 
 // Seed populates hard-coded certificates for local development.
@@ -70,6 +81,20 @@ func (s *MemoryStore) Seed() {
 		NotBefore: now.AddDate(-2, 0, 0),
 		NotAfter:  now.AddDate(-1, 0, 0),
 	})
+}
+
+// cloneCert deep-copies the Certificate so callers don't share the
+// RevokedAt pointer with anything else (Store internals or other callers).
+func cloneCert(c model.Certificate) model.Certificate {
+	out := c
+	if c.RevokedAt != nil {
+		t := *c.RevokedAt
+		out.RevokedAt = &t
+	}
+	if c.Serial != nil {
+		out.Serial = append([]byte(nil), c.Serial...)
+	}
+	return out
 }
 
 func mustHex(s string) []byte {

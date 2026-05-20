@@ -27,8 +27,9 @@ func TestParseSerial(t *testing.T) {
 		{"odd length", "1A2", "", true},
 		{"lowercase decoded equals upper-case decoded", "01a2b3", "01A2B3", false},
 		{"uppercase preserved", "01A2B3", "01A2B3", false},
-		{"long hex (typical X.509: 40 chars)", strings.Repeat("AB", 20), strings.Repeat("AB", 20), false},
-		{"very long hex must not panic", strings.Repeat("a", 4096), strings.Repeat("A", 4096), false},
+		{"40 hex chars accepted (RFC 5280 boundary)", strings.Repeat("AB", 20), strings.Repeat("AB", 20), false},
+		{"42 hex chars rejected (just over RFC limit)", strings.Repeat("AB", 21), "", true},
+		{"4096 hex chars rejected (DoS guard)", strings.Repeat("a", 4096), "", true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,6 +47,42 @@ func TestParseSerial(t *testing.T) {
 			want, _ := hex.DecodeString(tc.wantHex)
 			if !bytes.Equal(got, want) {
 				t.Errorf("parseSerial(%q)=%x, want %x", tc.in, got, want)
+			}
+		})
+	}
+}
+
+func TestParseCaID(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		in      string
+		want    uint16
+		wantErr bool
+	}{
+		{"", 0, false},
+		{"0", 0, false},
+		{"1", 1, false},
+		{"65535", 65535, false},
+		{"65536", 0, true}, // overflow uint16
+		{"-1", 0, true},
+		{"abc", 0, true},
+		{"1.5", 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.in, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseCaID(tc.in)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("parseCaID(%q) err=nil, want error", tc.in)
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("parseCaID(%q) err=%v, want nil", tc.in, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseCaID(%q)=%d, want %d", tc.in, got, tc.want)
 			}
 		})
 	}

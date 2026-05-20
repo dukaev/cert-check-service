@@ -34,8 +34,10 @@ CREATE TABLE certificates (
 - **PK `(ca_id, serial)`** — серийник уникален только в пределах УЦ; запросы практически всегда приходят с указанием УЦ (либо его можно вывести из контекста клиента/маршрута).
 - **HASH-партиционирование по `ca_id`** на 32–64 партиции — равномерно размазывает 100 УЦ и позволяет масштабировать запись/вакуум. Range по дате тут не помогает: запрос идёт по серийнику, а не по диапазону времени.
 - **Покрывающий индекс** `(ca_id, serial) INCLUDE (not_before, not_after, revoked_at)` — index-only scan, без захода в heap.
-- **`serial BYTEA` вместо TEXT** — меньше байт, быстрее сравнение, нет проблем с регистром hex.
+- **`serial BYTEA` вместо TEXT** — меньше байт, быстрее сравнение, нет проблем с регистром hex. Длина ограничена RFC 5280 §4.1.2.2: `CHECK (octet_length(serial) BETWEEN 1 AND 20)`.
 - Если запросов «только по serial без ca_id» много — добавить вторичный индекс по `serial`, но лучше пробрасывать `ca_id` с клиента (issuer известен из самого сертификата).
+
+**⚠️ Hot-spot risk:** распределение УЦ неравномерное — один крупный УЦ (например Let's Encrypt) может выпускать 90 %+ всех сертификатов. HASH(ca_id) изолированно коллапсирует такой УЦ в одну партицию. Защита — **двухуровневое партиционирование**: `PARTITION BY HASH (ca_id)`, внутри каждой партиции `SUBPARTITION BY HASH (substring(serial FROM 1 FOR 1))` (первый байт серийника). Это размазывает крупного УЦ на N подпартиций. Альтернатива — динамический шардинг через Citus с указанием distribution column. Решение принимается, когда метрика partition size variance превышает порог.
 
 ### 2. Кэширование
 
@@ -49,6 +51,8 @@ CREATE TABLE certificates (
 | CRL / список отзывов | компактный набор `revoked_serials` per ca_id | Redis + in-memory bloom filter | до следующего CRL update |
 
 **Bloom filter по отозванным серийникам** на каждом инстансе — решает 99% запросов без обращения к Redis/БД: если фильтр говорит «не отозван» — это гарантия; если «может быть отозван» — идём в БД. Размер на 1 млн отозванных ≈ 1.2 МБ при FP 1%.
+
+**⚠️ Cold-start критичен:** новый под не должен принимать трафик, пока bloom-фильтр не загружен из Redis. Это нагружает `/readyz` (см. шов §1 ниже): probe возвращает 503 до завершения preload. Иначе первая минута жизни нового пода даёт ложные `valid` ответы на отозванные сертификаты — корректность нарушена. K8s readiness probe + initialDelaySeconds покрывают это, но **полная защита требует логики в коде**, а не только в манифесте.
 
 **Инвалидация:**
 - Записи о сертификатах **иммутабельны до отзыва** — кэшировать `valid` ответы можно агрессивно, главное — корректно обрабатывать revocation.
@@ -85,11 +89,17 @@ CREATE TABLE certificates (
 - Раз в N минут — pull CRL с каждого УЦ, сравнение с БД, добор разошедшегося. Защищает от потерянных вебхуков.
 
 **Гарантии:**
-- **Idempotent writes:** `INSERT ... ON CONFLICT (ca_id, serial) DO UPDATE SET revoked_at = EXCLUDED.revoked_at WHERE certificates.revoked_at IS NULL` — повторная доставка события не ломает данные.
+- **Idempotent writes:** `INSERT ... ON CONFLICT (ca_id, serial) DO UPDATE SET revoked_at = LEAST(certificates.revoked_at, EXCLUDED.revoked_at) WHERE certificates.revoked_at IS NULL OR EXCLUDED.revoked_at < certificates.revoked_at` — при clock skew между публикаторами побеждает **более раннее** revocation. Без `LEAST` повторная доставка может откатить отзыв в будущее.
 - **Outbox pattern** в publisher: запись в БД и событие в Kafka — в одной транзакции через outbox-таблицу, чтобы не потерять revocation при падении.
 - **Мониторинг рассинхрона:** метрика `crl_lag_seconds` per ca_id; алерт, если события не приходят > X минут.
 - **Идемпотентный consumer** + DLQ для битых событий.
 - Health-чеки сервиса проверяют доступность БД (read), Redis и наличие свежих сообщений в Kafka.
+
+**SLO на propagation revocation:**
+- При штатной работе (Kafka up, consumers up): **p99 < 30 секунд** от записи в primary БД до инвалидации L1-кэша на всех инстансах.
+- При деградации Kafka (consumer lag > 1 мин): **≤ интервал CRL pull** (обычно 5–15 мин). Реализуется periodic reconciliation.
+- В худшем случае (одновременный отказ Kafka + CRL pull): **≤ TTL на L2** (5–10 мин). L2 TTL — последняя линия защиты против stale данных.
+- Audit-trail: каждое revocation сохраняет `RevocationReason` (RFC 5280 reason code: keyCompromise, cACompromise, affiliationChanged, etc.) — отдельное поле в `certificates` таблице.
 
 ---
 

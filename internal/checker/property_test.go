@@ -1,6 +1,7 @@
 package checker_test
 
 import (
+	"math/rand"
 	"testing"
 	"testing/quick"
 	"time"
@@ -13,9 +14,19 @@ import (
 // Each property is a statement that MUST hold for any input — quick.Check
 // generates random inputs and fails on counter-examples.
 
-const propIterations = 500
+const (
+	propIterations = 500
+	// Fixed seed makes flakes reproducible — without this, a property failing
+	// 1 run in 100 would be impossible to reproduce on the next CI run.
+	propSeed = 0xC0FFEE
+)
 
-var propConfig = &quick.Config{MaxCount: propIterations}
+func newPropConfig() *quick.Config {
+	return &quick.Config{
+		MaxCount: propIterations,
+		Rand:     rand.New(rand.NewSource(propSeed)),
+	}
+}
 
 var base = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -34,7 +45,7 @@ func TestProperty_ValidWhenInWindowAndNotRevoked(t *testing.T) {
 		valid, reason := checker.Check(cert, at)
 		return valid && reason == ""
 	}
-	if err := quick.Check(f, propConfig); err != nil {
+	if err := quick.Check(f, newPropConfig()); err != nil {
 		t.Error(err)
 	}
 }
@@ -59,7 +70,7 @@ func TestProperty_ExpiredAfterNotAfter(t *testing.T) {
 		_, reason := checker.Check(cert, at)
 		return reason == checker.ReasonExpired
 	}
-	if err := quick.Check(f, propConfig); err != nil {
+	if err := quick.Check(f, newPropConfig()); err != nil {
 		t.Error(err)
 	}
 }
@@ -84,7 +95,7 @@ func TestProperty_RevokingAtCheckTimeFlipsToRevoked(t *testing.T) {
 		_, reason := checker.Check(cert, at)
 		return reason == checker.ReasonRevoked
 	}
-	if err := quick.Check(f, propConfig); err != nil {
+	if err := quick.Check(f, newPropConfig()); err != nil {
 		t.Error(err)
 	}
 }
@@ -108,7 +119,7 @@ func TestProperty_Deterministic(t *testing.T) {
 		v2, r2 := checker.Check(cert, checkAt)
 		return v1 == v2 && r1 == r2
 	}
-	if err := quick.Check(f, propConfig); err != nil {
+	if err := quick.Check(f, newPropConfig()); err != nil {
 		t.Error(err)
 	}
 }

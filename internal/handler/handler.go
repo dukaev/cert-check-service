@@ -6,12 +6,17 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/dukaev/cert-check-service/internal/checker"
 	"github.com/dukaev/cert-check-service/internal/storage"
 )
+
+// MaxSerialHexLen — RFC 5280 §4.1.2.2: serialNumber MUST NOT be longer than 20 octets.
+// We accept up to 40 hex characters; anything longer is rejected at the boundary.
+const MaxSerialHexLen = 40
 
 // Clock is injectable so the default `at = now` branch is testable.
 type Clock interface{ Now() time.Time }
@@ -21,12 +26,19 @@ type RealClock struct{}
 func (RealClock) Now() time.Time { return time.Now().UTC() }
 
 type Handler struct {
-	Store storage.Store
-	Clock Clock
+	Store   storage.Store
+	Readier storage.Readier // optional; if nil, /readyz returns 200
+	Clock   Clock
 }
 
 func New(store storage.Store, clock Clock) *Handler {
-	return &Handler{Store: store, Clock: clock}
+	h := &Handler{Store: store, Clock: clock}
+	// MemoryStore (and any Store impl that also implements Readier) doubles
+	// as the readiness probe — avoids passing the same dependency twice.
+	if r, ok := store.(storage.Readier); ok {
+		h.Readier = r
+	}
+	return h
 }
 
 // Response is the JSON shape returned by /api/v1/check on success.
@@ -84,26 +96,64 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Ready handles GET /readyz. Returns 200 only if the underlying storage
+// answers Ping within the request context. /healthz (liveness) is a separate
+// concern: it's 200 as long as the process is alive.
+func (h *Handler) Ready(w http.ResponseWriter, r *http.Request) {
+	if h.Readier == nil {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready"))
+		return
+	}
+	if err := h.Readier.Ping(r.Context()); err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, ErrorResponse{Error: "not ready: " + err.Error()})
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ready"))
+}
+
 // parseRequest validates and normalises query params.
 func parseRequest(r *http.Request, clock Clock) (parsedRequest, error) {
-	serial, err := parseSerial(r.URL.Query().Get("serial"))
+	q := r.URL.Query()
+
+	caID, err := parseCaID(q.Get("ca_id"))
+	if err != nil {
+		return parsedRequest{}, fmt.Errorf("ca_id: %w", err)
+	}
+	serial, err := parseSerial(q.Get("serial"))
 	if err != nil {
 		return parsedRequest{}, fmt.Errorf("serial: %w", err)
 	}
-	at, err := parseAt(r.URL.Query().Get("at"), clock)
+	at, err := parseAt(q.Get("at"), clock)
 	if err != nil {
 		return parsedRequest{}, fmt.Errorf("at: %w", err)
 	}
-	// caID is currently fixed at 0 — the public API does not expose it (spec).
-	// The internal Store call is already caID-aware so adding ?ca_id= is a one-liner later.
-	return parsedRequest{caID: 0, serial: serial, at: at}, nil
+	return parsedRequest{caID: caID, serial: serial, at: at}, nil
+}
+
+// parseCaID accepts a decimal uint16. Empty defaults to 0.
+// Serial is unique only within a CA, so production deployments will require
+// this; default 0 keeps backward compatibility with single-CA setups.
+func parseCaID(s string) (uint16, error) {
+	if s == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseUint(s, 10, 16)
+	if err != nil {
+		return 0, fmt.Errorf("not a uint16: %w", err)
+	}
+	return uint16(n), nil
 }
 
 // parseSerial validates a hex serial number and returns it decoded to raw bytes.
-// Rules: non-empty, even length, hex chars only.
+// Rules: non-empty, even length, hex chars only, ≤ 40 hex chars (RFC 5280 §4.1.2.2).
 func parseSerial(s string) ([]byte, error) {
 	if s == "" {
 		return nil, errors.New("required")
+	}
+	if len(s) > MaxSerialHexLen {
+		return nil, fmt.Errorf("too long: %d chars (max %d, RFC 5280)", len(s), MaxSerialHexLen)
 	}
 	if len(s)%2 != 0 {
 		return nil, errors.New("odd length")

@@ -19,17 +19,22 @@ import (
 )
 
 // fakeStore is a deterministic in-memory Store for handler tests.
-// Keyed by string(bytes) since []byte isn't a valid map key in Go.
+// Key is (caID, string(serial-bytes)) since []byte isn't a valid map key.
+type fakeKey struct {
+	caID   uint16
+	serial string
+}
+
 type fakeStore struct {
-	data map[string]model.Certificate
+	data map[fakeKey]model.Certificate
 	err  error // if non-nil, Get returns this error before lookup (used to simulate 5xx)
 }
 
-func (s *fakeStore) Get(_ context.Context, _ uint16, serial []byte) (model.Certificate, error) {
+func (s *fakeStore) Get(_ context.Context, caID uint16, serial []byte) (model.Certificate, error) {
 	if s.err != nil {
 		return model.Certificate{}, s.err
 	}
-	c, ok := s.data[string(serial)]
+	c, ok := s.data[fakeKey{caID: caID, serial: string(serial)}]
 	if !ok {
 		return model.Certificate{}, storage.ErrNotFound
 	}
@@ -61,9 +66,9 @@ func newTestMux(t *testing.T) http.Handler {
 	t.Helper()
 	s01 := mustHex(t, "01A2B3")
 	sDead := mustHex(t, "DEADBEEF")
-	store := &fakeStore{data: map[string]model.Certificate{
-		string(s01):   {Serial: s01, NotBefore: notBefore, NotAfter: notAfter},
-		string(sDead): {Serial: sDead, NotBefore: notBefore, NotAfter: notAfter, RevokedAt: &revokedAt},
+	store := &fakeStore{data: map[fakeKey]model.Certificate{
+		{caID: 0, serial: string(s01)}:   {Serial: s01, NotBefore: notBefore, NotAfter: notAfter},
+		{caID: 0, serial: string(sDead)}: {Serial: sDead, NotBefore: notBefore, NotAfter: notAfter, RevokedAt: &revokedAt},
 	}}
 	h := handler.New(store, fixedClock{t: defaultAt})
 	mux := http.NewServeMux()
@@ -135,11 +140,14 @@ func TestCheck_Expired(t *testing.T) {
 func TestCheck_BadRequest(t *testing.T) {
 	mux := newTestMux(t)
 	cases := []string{
-		"/api/v1/check",                             // serial missing
-		"/api/v1/check?serial=",                     // serial empty
-		"/api/v1/check?serial=01XZ",                 // non-hex
-		"/api/v1/check?serial=01A2B3&at=yesterday",  // bad at
-		"/api/v1/check?serial=01A2B3&at=2026-01-01", // not RFC3339
+		"/api/v1/check",                                    // serial missing
+		"/api/v1/check?serial=",                            // serial empty
+		"/api/v1/check?serial=01XZ",                        // non-hex
+		"/api/v1/check?serial=01A2B3&at=yesterday",         // bad at
+		"/api/v1/check?serial=01A2B3&at=2026-01-01",        // not RFC3339
+		"/api/v1/check?serial=01A2B3&ca_id=abc",            // bad ca_id
+		"/api/v1/check?serial=01A2B3&ca_id=70000",          // ca_id overflow uint16
+		"/api/v1/check?serial=" + strings.Repeat("AB", 21), // serial too long (RFC 5280)
 	}
 	for _, path := range cases {
 		t.Run(path, func(t *testing.T) {
@@ -148,6 +156,19 @@ func TestCheck_BadRequest(t *testing.T) {
 				t.Errorf("path %s: status = %d, want 400", path, w.Code)
 			}
 		})
+	}
+}
+
+// TestCheck_CaIDIsolation — serial unique only within a CA; querying with
+// the wrong ca_id must miss even when the same hex exists under ca_id=0.
+func TestCheck_CaIDIsolation(t *testing.T) {
+	mux := newTestMux(t)
+	w, resp := do(t, mux, "/api/v1/check?serial=01A2B3&ca_id=42")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if resp.Valid || resp.Reason != checker.ReasonNotFound {
+		t.Errorf("response = %+v, want valid=false reason=not_found (cert exists under ca_id=0, not 42)", resp)
 	}
 }
 
