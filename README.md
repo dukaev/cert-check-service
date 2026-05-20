@@ -118,7 +118,7 @@ Apple M-серия, Go 1.25.6, `GOMAXPROCS=12`. Сервер запущен на
 
 ## Часть 2. Архитектурный эскиз (production)
 
-Здесь — резюме на 1 страницу. Полная версия с разделами «Архитектурные швы» и «Тесты по уровням пирамиды» — в [ARCHITECTURE.md](./ARCHITECTURE.md).
+Здесь — резюме на 1 страницу. Полноценный production design doc (Google-style framework: Context → Goals → Detailed Design → ADRs → Risks → Rollout) — в **[DESIGN.md](./DESIGN.md)**. Рабочие заметки про архитектурные швы и пирамиду тестов — в [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ### Хранение
 **PostgreSQL.** Данные структурированные, почти иммутабельные (после выпуска меняется только `revoked_at`), 100M строк — типичная нагрузка для одной ноды. Доступ — точечный по PK.
