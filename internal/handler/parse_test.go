@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +17,7 @@ func TestParseSerial(t *testing.T) {
 	tests := []struct {
 		name    string
 		in      string
-		want    string
+		wantHex string // expected output as hex string for readability
 		wantErr bool
 	}{
 		{"empty", "", "", true},
@@ -23,7 +25,7 @@ func TestParseSerial(t *testing.T) {
 		{"space inside", "01 02", "", true},
 		{"0x prefix not allowed", "0x01", "", true},
 		{"odd length", "1A2", "", true},
-		{"lowercase normalized to upper", "01a2b3", "01A2B3", false},
+		{"lowercase decoded equals upper-case decoded", "01a2b3", "01A2B3", false},
 		{"uppercase preserved", "01A2B3", "01A2B3", false},
 		{"long hex (typical X.509: 40 chars)", strings.Repeat("AB", 20), strings.Repeat("AB", 20), false},
 		{"very long hex must not panic", strings.Repeat("a", 4096), strings.Repeat("A", 4096), false},
@@ -41,8 +43,9 @@ func TestParseSerial(t *testing.T) {
 			if err != nil {
 				t.Errorf("parseSerial(%q) err=%v, want nil", tc.in, err)
 			}
-			if got != tc.want {
-				t.Errorf("parseSerial(%q)=%q, want %q", tc.in, got, tc.want)
+			want, _ := hex.DecodeString(tc.wantHex)
+			if !bytes.Equal(got, want) {
+				t.Errorf("parseSerial(%q)=%x, want %x", tc.in, got, want)
 			}
 		})
 	}

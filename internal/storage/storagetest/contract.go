@@ -13,7 +13,9 @@
 package storagetest
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"errors"
 	"sync"
 	"testing"
@@ -33,27 +35,28 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 	t.Helper()
 
 	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	serial := mustHex(t, "01A2B3")
 	cert := model.Certificate{
 		CaID:      0,
-		Serial:    "01A2B3",
+		Serial:    serial,
 		NotBefore: base,
 		NotAfter:  base.AddDate(1, 0, 0),
 	}
 
 	t.Run("Get_existing", func(t *testing.T) {
 		s := newStore([]model.Certificate{cert})
-		got, err := s.Get(context.Background(), 0, "01A2B3")
+		got, err := s.Get(context.Background(), 0, serial)
 		if err != nil {
 			t.Fatalf("Get err = %v, want nil", err)
 		}
-		if got.Serial != cert.Serial {
-			t.Errorf("Get serial = %q, want %q", got.Serial, cert.Serial)
+		if !bytes.Equal(got.Serial, cert.Serial) {
+			t.Errorf("Get serial = %x, want %x", got.Serial, cert.Serial)
 		}
 	})
 
 	t.Run("Get_missing_returns_ErrNotFound", func(t *testing.T) {
 		s := newStore(nil)
-		_, err := s.Get(context.Background(), 0, "NOPE")
+		_, err := s.Get(context.Background(), 0, mustHex(t, "BADC0FFE"))
 		if !errors.Is(err, storage.ErrNotFound) {
 			t.Errorf("Get err = %v, want ErrNotFound", err)
 		}
@@ -62,17 +65,19 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 	t.Run("Get_wrong_ca_id_returns_ErrNotFound", func(t *testing.T) {
 		// Serial is unique only within a CA. Same serial under different CA must miss.
 		s := newStore([]model.Certificate{cert})
-		_, err := s.Get(context.Background(), 1, "01A2B3")
+		_, err := s.Get(context.Background(), 1, serial)
 		if !errors.Is(err, storage.ErrNotFound) {
 			t.Errorf("Get err = %v, want ErrNotFound", err)
 		}
 	})
 
-	t.Run("Get_case_insensitive_serial", func(t *testing.T) {
+	t.Run("Get_byte_identity", func(t *testing.T) {
+		// Two independently decoded byte slices for the same hex must hit the same row.
 		s := newStore([]model.Certificate{cert})
-		_, err := s.Get(context.Background(), 0, "01a2b3")
+		duplicate := mustHex(t, "01A2B3") // separately allocated
+		_, err := s.Get(context.Background(), 0, duplicate)
 		if err != nil {
-			t.Errorf("Get err = %v, want nil (lookup must be case-insensitive)", err)
+			t.Errorf("Get err = %v, want nil (lookup must be content-equal, not pointer-equal)", err)
 		}
 	})
 
@@ -84,7 +89,7 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 		// We only assert the call returns at all (no hang).
 		done := make(chan struct{})
 		go func() {
-			_, _ = s.Get(ctx, 0, "01A2B3")
+			_, _ = s.Get(ctx, 0, serial)
 			close(done)
 		}()
 		select {
@@ -102,9 +107,18 @@ func RunStoreContract(t *testing.T, newStore Factory) {
 		for i := 0; i < n; i++ {
 			go func() {
 				defer wg.Done()
-				_, _ = s.Get(context.Background(), 0, "01A2B3")
+				_, _ = s.Get(context.Background(), 0, serial)
 			}()
 		}
 		wg.Wait()
 	})
+}
+
+func mustHex(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		t.Fatalf("invalid hex fixture %q: %v", s, err)
+	}
+	return b
 }

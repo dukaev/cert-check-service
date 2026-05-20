@@ -74,20 +74,20 @@ Apple M-серия, Go 1.25.6, `GOMAXPROCS=12`. Сервер запущен на
 
 | Бенч | ns/op | allocs/op |
 |---|---|---|
-| `checker.Check` | **6.1** | 0 |
-| `MemoryStore.Get` (RunParallel) | **148** | 0 |
-| `Handler.Check` (RunParallel) | 1233 | 16 (доминирует `encoding/json`) |
+| `checker.Check` | **6.9** | 0 |
+| `MemoryStore.Get` (RunParallel) | **173** | 0 |
+| `Handler.Check` (RunParallel) | 1183 | 19 (доминирует `encoding/json` + hex-кодирование ответа) |
 
-**Нагрузочный тест** (`vegeta`, 10 000 req/s × 30 s, 4 таргета — горячий/revoked/expired/not_found):
+**Нагрузочный тест** (`vegeta`, 10 000 req/s × 30 s, прогрев 2 с, 4 таргета — горячий/revoked/expired/not_found):
 
 | Метрика | Значение |
 |---|---|
-| Throughput | **9890 req/s sustained** |
-| p50 latency | **77 µs** |
-| p95 latency | 906 µs |
-| p99 latency | 24 ms (GC pauses) |
-| max latency | 88 ms |
-| Success | 98.9 % (1.1 % — refused в первые ~150 ms до прогрева; устраняется warmup-запросом) |
+| Throughput | **9993 req/s sustained** |
+| p50 latency | **85 µs** |
+| p95 latency | 2.2 ms |
+| p99 latency | 19.5 ms (GC pauses) |
+| max latency | 93 ms |
+| Success | **100 %** |
 
 Целевая цифра «10 000 RPS» из Части 2 реалистична уже на одной ноде в in-memory режиме. Хот-пат (`Check` + `Get`) — **ноль аллокаций**, GC задевает только JSON-кодирование в HTTP-слое.
 

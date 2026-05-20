@@ -1,6 +1,7 @@
 package handler_test
 
 import (
+	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -12,8 +13,9 @@ import (
 
 // Run: go test -bench=. -benchmem -benchtime=5s ./internal/handler/...
 func BenchmarkHandler_Check(b *testing.B) {
+	serial, _ := hex.DecodeString("01A2B3")
 	store := &fakeStore{data: map[string]model.Certificate{
-		"01A2B3": {Serial: "01A2B3", NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)},
+		string(serial): {Serial: serial, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour)},
 	}}
 	h := handler.New(store, handler.RealClock{})
 	mux := http.NewServeMux()
