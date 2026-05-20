@@ -51,12 +51,32 @@ loadtest/                          vegeta-таргеты и инструкция
 ## Тесты, линтеры, бенчмарки
 
 ```bash
-go test -race -count=1 ./...                              # unit + property + contract + concurrency
-go test -fuzz=FuzzParseSerial -fuzztime=30s ./internal/handler/...
-go test -fuzz=FuzzParseAt     -fuzztime=30s ./internal/handler/...
-go test -bench=. -benchmem -benchtime=2s ./...
-golangci-lint run
+make test           # unit + property + contract + concurrency under -race
+make lint           # golangci-lint
+make bench          # microbenchmarks
+make fuzz-serial    # fuzz parseSerial 30s
+make fuzz-at        # fuzz parseAt 30s
+make cover          # coverage report
+make load-test      # vegeta against a running server
+make docker         # build docker image
+make help           # all targets
 ```
+
+Эквиваленты на чистом `go`:
+
+```bash
+go test -race -count=1 ./...
+go test -fuzz=FuzzParseSerial -fuzztime=30s ./internal/handler/...
+go test -bench=. -benchmem ./...
+```
+
+## Operations
+
+- **Graceful shutdown:** SIGTERM/SIGINT → `srv.Shutdown` с 10-секундным таймаутом → процесс выходит после завершения in-flight запросов.
+- **Structured JSON logs** через `log/slog` — каждый запрос логируется одной строкой `{method, path, query, status, dur}`. `/healthz` исключён, чтобы k8s liveness probe не топил полезные логи.
+- **Полные таймауты сервера:** `ReadHeaderTimeout` 5s, `ReadTimeout` 10s, `WriteTimeout` 10s, `IdleTimeout` 60s — защита от slowloris и зависших соединений.
+- **JSON-ответы на ошибки:** 4xx/5xx возвращают `{"error": "..."}`, такая же `application/json` форма, как успешный ответ — клиент не парсит два разных формата.
+- **Конфигурация:** через переменные окружения (`LISTEN_ADDR`, по умолчанию `:8080`).
 
 Покрытие тестами по слоям:
 
