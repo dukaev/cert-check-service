@@ -82,9 +82,12 @@ go test -bench=. -benchmem ./...
 
 | Слой | Что проверяется |
 |---|---|
-| `checker` | table-driven (границы окна, `>=` для revoke, expired-побеждает-revoked) + **property-based** (4 инварианта × 500 итераций через `testing/quick`) |
-| `storage` | **contract-тест** в `storagetest.RunStoreContract` — переиспользуется любой реализацией Store |
-| `handler` | httptest 200/400/405, golden JSON, ctx cancel, 100 конкурентных клиентов, **fuzz** для парсеров serial и at |
+| `checker` | table-driven (границы окна с 1ns-точностью, `>=` для revoke, expired-побеждает-revoked) + **property-based** (4 инварианта × 500 итераций через `testing/quick`) |
+| `storage` | **contract-тест** в `storagetest.RunStoreContract` — переиспользуется любой реализацией Store; отдельно `Seed` и concurrent reads |
+| `handler` | httptest 200/400/405/500, golden JSON success-формы, golden JSON error-формы (Content-Type + `ErrorResponse`), ctx cancel, 100 конкурентных клиентов, AccessLog middleware (log shape + skip `/healthz`), **fuzz** для парсеров serial и at |
+| `cmd/server` (через handler-пакет) | graceful shutdown: `srv.Shutdown` ждёт in-flight запроса; новые соединения после shutdown — отказ |
+
+**Покрытие: 93.9% statements** (`go test -coverprofile=cov.out -coverpkg=./internal/... ./...`). Все public-функции в `checker`/`handler`/`storage` — 100%; оставшиеся 6.1% — panic-ветки в тест-хелперах (`mustHex`), которые по дизайну не покрываются.
 
 ## Performance
 
