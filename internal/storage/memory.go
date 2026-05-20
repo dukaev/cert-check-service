@@ -34,18 +34,22 @@ func (s *MemoryStore) Put(c model.Certificate) {
 	s.data[memKey{caID: c.CaID, serial: strings.ToUpper(c.Serial)}] = c
 }
 
-// Get is the hot path — must be zero-allocation.
-//
-// TODO(part-1): implement.
+// Get returns the certificate or ErrNotFound. ctx is honored for cancellation
+// to keep the contract identical to a Postgres-backed implementation.
 func (s *MemoryStore) Get(ctx context.Context, caID uint16, serial string) (model.Certificate, error) {
-	_ = ctx // unused until real I/O is added
-	_ = caID
-	_ = serial
-	return model.Certificate{}, ErrNotFound
+	if err := ctx.Err(); err != nil {
+		return model.Certificate{}, err
+	}
+	s.mu.RLock()
+	c, ok := s.data[memKey{caID: caID, serial: strings.ToUpper(serial)}]
+	s.mu.RUnlock()
+	if !ok {
+		return model.Certificate{}, ErrNotFound
+	}
+	return c, nil
 }
 
 // Seed populates hard-coded certificates for local development.
-// TODO(part-1): expand fixtures (valid, expired, revoked, future).
 func (s *MemoryStore) Seed() {
 	now := time.Now().UTC()
 	revoked := now.Add(-24 * time.Hour)
@@ -61,7 +65,7 @@ func (s *MemoryStore) Seed() {
 		RevokedAt: &revoked,
 	})
 	s.Put(model.Certificate{
-		Serial:    "EXPIRED1",
+		Serial:    "E0E0E0E0", // expired (hex-valid, 8 chars)
 		NotBefore: now.AddDate(-2, 0, 0),
 		NotAfter:  now.AddDate(-1, 0, 0),
 	})

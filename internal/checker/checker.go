@@ -18,8 +18,12 @@ const (
 //  3. Otherwise valid, reason == "".
 //
 // Order matters: expired wins over revoked (window is checked first).
-//
-// TODO(part-1): implement.
 func Check(cert model.Certificate, checkTime time.Time) (valid bool, reason string) {
-	return false, "TODO"
+	if checkTime.Before(cert.NotBefore) || checkTime.After(cert.NotAfter) {
+		return false, ReasonExpired
+	}
+	if cert.RevokedAt != nil && !checkTime.Before(*cert.RevokedAt) {
+		return false, ReasonRevoked
+	}
+	return true, ""
 }

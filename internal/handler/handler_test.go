@@ -83,7 +83,7 @@ func TestCheck_Valid(t *testing.T) {
 func TestCheck_NotFound_Returns200(t *testing.T) {
 	// Per spec: not_found is a business answer, not a 404.
 	mux := newTestMux(t)
-	w, resp := do(t, mux, "/api/v1/check?serial=BADC0FFEE")
+	w, resp := do(t, mux, "/api/v1/check?serial=BADC0FFE")
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200", w.Code)
@@ -91,7 +91,7 @@ func TestCheck_NotFound_Returns200(t *testing.T) {
 	if resp.Valid || resp.Reason != checker.ReasonNotFound {
 		t.Errorf("response = %+v, want valid=false reason=%s", resp, checker.ReasonNotFound)
 	}
-	if resp.Serial != "BADC0FFEE" {
+	if resp.Serial != "BADC0FFE" {
 		t.Errorf("serial in response = %q, want it echoed even on not_found", resp.Serial)
 	}
 }

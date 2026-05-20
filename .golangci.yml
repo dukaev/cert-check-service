@@ -32,9 +32,6 @@ linters:
         linters:
           - errcheck
           - unused
-      # Stubs are intentionally minimal until Part 1 lands.
-      - path: internal/(checker|handler|storage)/.*\.go
-        text: "TODO"
 
 formatters:
   enable:

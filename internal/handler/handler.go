@@ -3,9 +3,12 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/dukaev/cert-check-service/internal/checker"
 	"github.com/dukaev/cert-check-service/internal/storage"
 )
 
@@ -41,32 +44,81 @@ type parsedRequest struct {
 }
 
 // Check handles GET /api/v1/check.
-// TODO(part-1): implement.
 func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
-	req, _ := parseRequest(r, h.Clock)
-	_, _ = h.Store.Get(r.Context(), req.caID, req.serial)
-	writeJSON(w, http.StatusNotImplemented, Response{Reason: "TODO"})
+	req, err := parseRequest(r, h.Clock)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	cert, err := h.Store.Get(r.Context(), req.caID, req.serial)
+	if errors.Is(err, storage.ErrNotFound) {
+		writeJSON(w, http.StatusOK, Response{
+			Serial: req.serial,
+			Valid:  false,
+			Reason: checker.ReasonNotFound,
+		})
+		return
+	}
+	if err != nil {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+
+	valid, reason := checker.Check(cert, req.at)
+	writeJSON(w, http.StatusOK, Response{
+		Serial: req.serial,
+		Valid:  valid,
+		Reason: reason,
+	})
 }
 
 // parseRequest validates and normalises query params.
-// TODO(part-1): implement (delegates to parseSerial + parseAt).
 func parseRequest(r *http.Request, clock Clock) (parsedRequest, error) {
-	serial, _ := parseSerial(r.URL.Query().Get("serial"))
-	at, _ := parseAt(r.URL.Query().Get("at"), clock)
-	return parsedRequest{caID: 0, serial: serial, at: at}, errors.New("TODO")
+	serial, err := parseSerial(r.URL.Query().Get("serial"))
+	if err != nil {
+		return parsedRequest{}, fmt.Errorf("serial: %w", err)
+	}
+	at, err := parseAt(r.URL.Query().Get("at"), clock)
+	if err != nil {
+		return parsedRequest{}, fmt.Errorf("at: %w", err)
+	}
+	// caID is currently fixed at 0 — the public API does not expose it (spec).
+	// The internal Store call is already caID-aware so adding ?ca_id= is a one-liner later.
+	return parsedRequest{caID: 0, serial: serial, at: at}, nil
 }
 
 // parseSerial validates a hex serial number.
-// Rules: non-empty, even length, hex chars only ([0-9a-fA-F]). Returns the upper-cased value.
-// TODO(part-1): implement.
+// Rules: non-empty, even length, hex chars only. Returns the upper-cased value.
 func parseSerial(s string) (string, error) {
-	return "", errors.New("TODO")
+	if s == "" {
+		return "", errors.New("required")
+	}
+	if len(s)%2 != 0 {
+		return "", errors.New("odd length")
+	}
+	for _, c := range s {
+		if !isHexDigit(c) {
+			return "", fmt.Errorf("non-hex character %q", c)
+		}
+	}
+	return strings.ToUpper(s), nil
+}
+
+func isHexDigit(c rune) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 // parseAt validates an RFC3339 timestamp; empty string returns clock.Now().
-// TODO(part-1): implement.
 func parseAt(s string, clock Clock) (time.Time, error) {
-	return time.Time{}, errors.New("TODO")
+	if s == "" {
+		return clock.Now(), nil
+	}
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("not RFC3339: %w", err)
+	}
+	return t, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {
