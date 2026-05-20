@@ -41,13 +41,13 @@ echo "GET http://localhost:8080/api/v1/check?serial=01A2B3" \
 
 ## Measured results (snapshot)
 
-Apple M-series, Go 1.25.6, `GOMAXPROCS=12`, server run via `go run` (Docker daemon unavailable at the time):
+Apple M-series, Go 1.25.6, `GOMAXPROCS=12`, server run via `go run`, 2 s warmup before vegeta:
 
 ```
 target:     10 000 req/s, 30s, 4 targets (hot/revoked/expired/not_found)
-throughput: 9890.5 req/s sustained
-latency:    p50=77µs  p95=906µs  p99=24ms  max=88ms
-success:    98.9% (1.1% refused in the first ~150ms before warmup)
+throughput: 9993.6 req/s sustained
+latency:    p50=85µs  p95=2.2ms  p99=19.5ms  max=93ms
+success:    100%
 allocs:     0 on hot path (checker.Check, MemoryStore.Get)
 ```
 

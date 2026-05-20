@@ -1,6 +1,7 @@
 package checker_test
 
 import (
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -14,9 +15,10 @@ func TestCheck(t *testing.T) {
 	notBefore := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	notAfter := notBefore.AddDate(1, 0, 0)
 	revokedAt := notBefore.AddDate(0, 6, 0)
+	serial, _ := hex.DecodeString("01A2B3")
 
 	base := model.Certificate{
-		Serial:    "01A2B3",
+		Serial:    serial,
 		NotBefore: notBefore,
 		NotAfter:  notAfter,
 	}
@@ -33,12 +35,12 @@ func TestCheck(t *testing.T) {
 		{"valid mid-window", base, notBefore.AddDate(0, 3, 0), true, ""},
 		{"boundary NotBefore inclusive", base, notBefore, true, ""},
 		{"boundary NotAfter inclusive", base, notAfter, true, ""},
-		{"expired before NotBefore", base, notBefore.Add(-time.Second), false, checker.ReasonExpired},
-		{"expired after NotAfter", base, notAfter.Add(time.Second), false, checker.ReasonExpired},
+		{"expired before NotBefore (1ns)", base, notBefore.Add(-time.Nanosecond), false, checker.ReasonExpired},
+		{"expired after NotAfter (1ns)", base, notAfter.Add(time.Nanosecond), false, checker.ReasonExpired},
 
 		{"revoked strictly after RevokedAt", revoked, revokedAt.Add(time.Hour), false, checker.ReasonRevoked},
 		{"revoked boundary checkTime == RevokedAt (>=)", revoked, revokedAt, false, checker.ReasonRevoked},
-		{"valid before RevokedAt", revoked, revokedAt.Add(-time.Hour), true, ""},
+		{"valid 1ns before RevokedAt", revoked, revokedAt.Add(-time.Nanosecond), true, ""},
 		{"expired beats revoked (after NotAfter)", revoked, notAfter.Add(time.Hour), false, checker.ReasonExpired},
 	}
 
@@ -58,9 +60,10 @@ func TestCheck_RevokedAtAfterNotAfter(t *testing.T) {
 	notBefore := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	notAfter := notBefore.AddDate(1, 0, 0)
 	revokedAt := notAfter.AddDate(0, 1, 0)
+	serial, _ := hex.DecodeString("FFFF")
 
 	cert := model.Certificate{
-		Serial:    "FFFF",
+		Serial:    serial,
 		NotBefore: notBefore,
 		NotAfter:  notAfter,
 		RevokedAt: &revokedAt,

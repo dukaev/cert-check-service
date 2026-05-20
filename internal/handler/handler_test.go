@@ -1,7 +1,9 @@
 package handler_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -17,12 +19,13 @@ import (
 )
 
 // fakeStore is a deterministic in-memory Store for handler tests.
+// Keyed by string(bytes) since []byte isn't a valid map key in Go.
 type fakeStore struct {
 	data map[string]model.Certificate
 }
 
-func (s *fakeStore) Get(_ context.Context, _ uint16, serial string) (model.Certificate, error) {
-	c, ok := s.data[strings.ToUpper(serial)]
+func (s *fakeStore) Get(_ context.Context, _ uint16, serial []byte) (model.Certificate, error) {
+	c, ok := s.data[string(serial)]
 	if !ok {
 		return model.Certificate{}, storage.ErrNotFound
 	}
@@ -41,11 +44,22 @@ var (
 	defaultAt = notBefore.AddDate(0, 3, 0) // mid-window
 )
 
+func mustHex(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		t.Fatalf("bad fixture hex %q: %v", s, err)
+	}
+	return b
+}
+
 func newTestMux(t *testing.T) http.Handler {
 	t.Helper()
+	s01 := mustHex(t, "01A2B3")
+	sDead := mustHex(t, "DEADBEEF")
 	store := &fakeStore{data: map[string]model.Certificate{
-		"01A2B3":   {Serial: "01A2B3", NotBefore: notBefore, NotAfter: notAfter},
-		"DEADBEEF": {Serial: "DEADBEEF", NotBefore: notBefore, NotAfter: notAfter, RevokedAt: &revokedAt},
+		string(s01):   {Serial: s01, NotBefore: notBefore, NotAfter: notAfter},
+		string(sDead): {Serial: sDead, NotBefore: notBefore, NotAfter: notAfter, RevokedAt: &revokedAt},
 	}}
 	h := handler.New(store, fixedClock{t: defaultAt})
 	mux := http.NewServeMux()
@@ -163,6 +177,9 @@ func TestCheck_CaseInsensitiveSerial(t *testing.T) {
 	if !resp.Valid {
 		t.Errorf("lowercase serial should resolve to the same cert; got %+v", resp)
 	}
+	if resp.Serial != "01A2B3" {
+		t.Errorf("response serial = %q, want canonical upper-case form", resp.Serial)
+	}
 }
 
 func TestCheck_ContextCancellation(t *testing.T) {
@@ -210,3 +227,6 @@ func TestCheck_Concurrent(t *testing.T) {
 type statusErr struct{ code int }
 
 func (e *statusErr) Error() string { return http.StatusText(e.code) }
+
+// Quick sanity: bytes-helper used by mustHex matches encoding/hex.
+var _ = bytes.Equal

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -30,6 +31,7 @@ func New(store storage.Store, clock Clock) *Handler {
 
 // Response is the JSON shape returned by /api/v1/check.
 // `reason` is intentionally NOT omitempty — the spec requires it as an empty string when valid.
+// Serial is hex-encoded for the wire (storage layer uses []byte).
 type Response struct {
 	Serial string `json:"serial"`
 	Valid  bool   `json:"valid"`
@@ -39,7 +41,7 @@ type Response struct {
 // parsedRequest holds the validated query parameters.
 type parsedRequest struct {
 	caID   uint16
-	serial string
+	serial []byte
 	at     time.Time
 }
 
@@ -51,10 +53,13 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Hex-encode once for both the response and any error branch.
+	serialHex := strings.ToUpper(hex.EncodeToString(req.serial))
+
 	cert, err := h.Store.Get(r.Context(), req.caID, req.serial)
 	if errors.Is(err, storage.ErrNotFound) {
 		writeJSON(w, http.StatusOK, Response{
-			Serial: req.serial,
+			Serial: serialHex,
 			Valid:  false,
 			Reason: checker.ReasonNotFound,
 		})
@@ -67,7 +72,7 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 
 	valid, reason := checker.Check(cert, req.at)
 	writeJSON(w, http.StatusOK, Response{
-		Serial: req.serial,
+		Serial: serialHex,
 		Valid:  valid,
 		Reason: reason,
 	})
@@ -88,25 +93,20 @@ func parseRequest(r *http.Request, clock Clock) (parsedRequest, error) {
 	return parsedRequest{caID: 0, serial: serial, at: at}, nil
 }
 
-// parseSerial validates a hex serial number.
-// Rules: non-empty, even length, hex chars only. Returns the upper-cased value.
-func parseSerial(s string) (string, error) {
+// parseSerial validates a hex serial number and returns it decoded to raw bytes.
+// Rules: non-empty, even length, hex chars only.
+func parseSerial(s string) ([]byte, error) {
 	if s == "" {
-		return "", errors.New("required")
+		return nil, errors.New("required")
 	}
 	if len(s)%2 != 0 {
-		return "", errors.New("odd length")
+		return nil, errors.New("odd length")
 	}
-	for _, c := range s {
-		if !isHexDigit(c) {
-			return "", fmt.Errorf("non-hex character %q", c)
-		}
+	b, err := hex.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("not hex: %w", err)
 	}
-	return strings.ToUpper(s), nil
-}
-
-func isHexDigit(c rune) bool {
-	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+	return b, nil
 }
 
 // parseAt validates an RFC3339 timestamp; empty string returns clock.Now().

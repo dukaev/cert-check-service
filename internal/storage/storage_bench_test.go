@@ -2,7 +2,7 @@ package storage_test
 
 import (
 	"context"
-	"strconv"
+	"encoding/binary"
 	"testing"
 	"time"
 
@@ -14,9 +14,13 @@ import (
 // Compare with a sync.Map-backed variant to validate the map+RWMutex choice for the ADR.
 func BenchmarkMemoryStore_Get(b *testing.B) {
 	s := storage.NewMemoryStore()
-	for i := 0; i < 100_000; i++ {
+	serials := make([][]byte, 100_000)
+	for i := range serials {
+		serial := make([]byte, 4)
+		binary.BigEndian.PutUint32(serial, uint32(i))
+		serials[i] = serial
 		s.Put(model.Certificate{
-			Serial:    strconv.Itoa(i),
+			Serial:    serial,
 			NotBefore: time.Now(),
 			NotAfter:  time.Now().Add(time.Hour),
 		})
@@ -27,7 +31,7 @@ func BenchmarkMemoryStore_Get(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			_, _ = s.Get(ctx, 0, strconv.Itoa(i%100_000))
+			_, _ = s.Get(ctx, 0, serials[i%len(serials)])
 			i++
 		}
 	})

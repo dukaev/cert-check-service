@@ -1,6 +1,7 @@
 package checker_test
 
 import (
+	"encoding/hex"
 	"testing"
 	"time"
 
@@ -11,8 +12,9 @@ import (
 // Run: go test -bench=. -benchmem -benchtime=5s -count=5 ./internal/checker/...
 func BenchmarkCheck(b *testing.B) {
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	serial, _ := hex.DecodeString("01A2B3")
 	cert := model.Certificate{
-		Serial:    "01A2B3",
+		Serial:    serial,
 		NotBefore: now.Add(-30 * 24 * time.Hour),
 		NotAfter:  now.Add(30 * 24 * time.Hour),
 	}
