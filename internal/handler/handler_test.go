@@ -22,9 +22,13 @@ import (
 // Keyed by string(bytes) since []byte isn't a valid map key in Go.
 type fakeStore struct {
 	data map[string]model.Certificate
+	err  error // if non-nil, Get returns this error before lookup (used to simulate 5xx)
 }
 
 func (s *fakeStore) Get(_ context.Context, _ uint16, serial []byte) (model.Certificate, error) {
+	if s.err != nil {
+		return model.Certificate{}, s.err
+	}
 	c, ok := s.data[string(serial)]
 	if !ok {
 		return model.Certificate{}, storage.ErrNotFound
@@ -227,6 +231,73 @@ func TestCheck_Concurrent(t *testing.T) {
 type statusErr struct{ code int }
 
 func (e *statusErr) Error() string { return http.StatusText(e.code) }
+
+// --- contract tests for JSON error responses --------------------------------
+
+// TestCheck_BadRequest_JSONShape asserts the wire contract: 4xx returns
+// application/json with an {"error":"..."} body. Locks in the change from
+// http.Error (text/plain) to writeJSON.
+func TestCheck_BadRequest_JSONShape(t *testing.T) {
+	mux := newTestMux(t)
+	req := httptest.NewRequest("GET", "/api/v1/check?serial=NOTHEX", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var resp handler.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("body is not valid JSON: %v\nbody: %s", err, w.Body.String())
+	}
+	if resp.Error == "" {
+		t.Error("ErrorResponse.Error is empty; want a non-empty message")
+	}
+}
+
+// TestCheck_InternalError_JSONShape covers the 5xx branch: Store returns an
+// unexpected error (anything that is not ErrNotFound) → 500 JSON.
+func TestCheck_InternalError_JSONShape(t *testing.T) {
+	store := &fakeStore{err: storage.ErrUnavailable}
+	h := handler.New(store, fixedClock{t: defaultAt})
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/check", h.Check)
+
+	req := httptest.NewRequest("GET", "/api/v1/check?serial=01A2B3", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "application/json") {
+		t.Errorf("Content-Type = %q, want application/json", ct)
+	}
+	var resp handler.ErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("body is not valid JSON: %v", err)
+	}
+	if resp.Error == "" {
+		t.Error("ErrorResponse.Error is empty")
+	}
+}
+
+// TestRealClock_Now sanity-checks the production Clock implementation.
+func TestRealClock_Now(t *testing.T) {
+	c := handler.RealClock{}
+	before := time.Now().UTC().Add(-time.Second)
+	got := c.Now()
+	after := time.Now().UTC().Add(time.Second)
+	if got.Location() != time.UTC {
+		t.Errorf("Now().Location = %v, want UTC", got.Location())
+	}
+	if got.Before(before) || got.After(after) {
+		t.Errorf("Now() = %v, expected within [%v, %v]", got, before, after)
+	}
+}
 
 // Quick sanity: bytes-helper used by mustHex matches encoding/hex.
 var _ = bytes.Equal
