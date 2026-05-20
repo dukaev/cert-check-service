@@ -1,11 +1,13 @@
 package main
 
 import (
-	"context"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/dukaev/cert-check-service/internal/handler"
+	"github.com/dukaev/cert-check-service/internal/storage"
 )
 
 func main() {
@@ -14,21 +16,22 @@ func main() {
 		addr = ":8080"
 	}
 
+	store := storage.NewMemoryStore()
+	store.Seed()
+	h := handler.New(store, handler.RealClock{})
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-
-	// TODO: GET /api/v1/check — реализовать обработчик проверки сертификата
-	// см. internal/handler, internal/storage, internal/model
+	mux.HandleFunc("GET /api/v1/check", h.Check)
 
 	srv := &http.Server{
 		Addr:              addr,
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	_ = context.Background()
 
 	log.Printf("cert-check-service listening on %s", addr)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

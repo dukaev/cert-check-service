@@ -1,0 +1,4 @@
+GET http://localhost:8080/api/v1/check?serial=01A2B3
+GET http://localhost:8080/api/v1/check?serial=DEADBEEF
+GET http://localhost:8080/api/v1/check?serial=EXPIRED1
+GET http://localhost:8080/api/v1/check?serial=NOTINSTORE

@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test (with race detector)
+        run: go test -race -timeout=2m ./...
+
+  docker-smoke:
+    runs-on: ubuntu-latest
+    needs: build-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t cert-check-service:ci .
+      - name: Run container and probe /healthz
+        run: |
+          docker run -d --name cc -p 8080:8080 cert-check-service:ci
+          for i in {1..15}; do
+            if curl -fsS http://localhost:8080/healthz >/dev/null; then
+              echo "healthz OK"
+              exit 0
+            fi
+            sleep 1
+          done
+          docker logs cc
+          exit 1
