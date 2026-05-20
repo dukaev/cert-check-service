@@ -1,0 +1,263 @@
+{
+  "info": {
+    "name": "cert-check-service",
+    "description": "Сертификат-чек сервис: коллекция для ручной проверки эндпоинтов /healthz, /readyz, /api/v1/check. Запускайте `make run` (или `make docker && docker run -p 8080:8080 cert-check-service:local`) перед использованием.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8080",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Operational",
+      "item": [
+        {
+          "name": "GET /healthz (liveness)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/healthz",
+              "host": ["{{baseUrl}}"],
+              "path": ["healthz"]
+            },
+            "description": "Liveness probe — всегда 200, если процесс жив. НЕ зависит от состояния backend (для k8s liveness probe)."
+          }
+        },
+        {
+          "name": "GET /readyz (readiness)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/readyz",
+              "host": ["{{baseUrl}}"],
+              "path": ["readyz"]
+            },
+            "description": "Readiness probe — 200 если Store.Ping(ctx) успешен, иначе 503. В Phase 2 — Postgres SELECT 1."
+          }
+        }
+      ]
+    },
+    {
+      "name": "/api/v1/check — success cases",
+      "item": [
+        {
+          "name": "valid certificate (01A2B3)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=01A2B3",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "01A2B3"}
+              ]
+            },
+            "description": "Серийник существует, в окне валидности, не отозван. Ожидается valid:true, reason:\"\""
+          }
+        },
+        {
+          "name": "revoked certificate (DEADBEEF)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=DEADBEEF",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "DEADBEEF"}
+              ]
+            },
+            "description": "Сертификат отозван 24 часа назад. Ожидается valid:false, reason:\"revoked\""
+          }
+        },
+        {
+          "name": "expired certificate (E0E0E0E0)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=E0E0E0E0",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "E0E0E0E0"}
+              ]
+            },
+            "description": "Окно валидности (NotBefore — NotAfter) уже прошло. Ожидается valid:false, reason:\"expired\""
+          }
+        },
+        {
+          "name": "not_found (hex-валидный, но отсутствует)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=ABCD",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "ABCD"}
+              ]
+            },
+            "description": "Серийник валидный по формату, но не в хранилище. Ожидается status 200, valid:false, reason:\"not_found\" (не 404 — это бизнес-результат)."
+          }
+        },
+        {
+          "name": "expired by `at` query param",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=01A2B3&at=2020-01-01T00:00:00Z",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "01A2B3"},
+                {"key": "at", "value": "2020-01-01T00:00:00Z"}
+              ]
+            },
+            "description": "Серт валиден сейчас, но дата 2020-01-01 — вне его NotBefore. Ожидается expired."
+          }
+        },
+        {
+          "name": "ca_id isolation (другой УЦ — not_found)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=01A2B3&ca_id=42",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "01A2B3"},
+                {"key": "ca_id", "value": "42"}
+              ]
+            },
+            "description": "Серт 01A2B3 существует под ca_id=0 (default). Запрос под ca_id=42 должен вернуть not_found. Демонстрация того, что серийник уникален в пределах УЦ."
+          }
+        },
+        {
+          "name": "case-insensitive serial (lower-case)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=01a2b3",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "01a2b3"}
+              ]
+            },
+            "description": "Lower-case hex декодируется в те же байты. Ответ — valid, но serial в ответе нормализован к upper-case."
+          }
+        }
+      ]
+    },
+    {
+      "name": "/api/v1/check — 400 error cases",
+      "item": [
+        {
+          "name": "400 — serial отсутствует",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"]
+            },
+            "description": "Обязательный параметр отсутствует. Ожидается 400 с JSON {\"error\":\"serial: required\"}."
+          }
+        },
+        {
+          "name": "400 — non-hex characters",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=NOTHEX",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "NOTHEX"}
+              ]
+            },
+            "description": "Серийник содержит не-hex символы. Ожидается 400."
+          }
+        },
+        {
+          "name": "400 — серийник > 40 hex chars (RFC 5280)",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=ABABABABABABABABABABABABABABABABABABABABAB",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "ABABABABABABABABABABABABABABABABABABABABAB"}
+              ]
+            },
+            "description": "42 hex chars > 40 (RFC 5280 §4.1.2.2 ограничивает serial в 20 байт = 40 hex). Ожидается 400."
+          }
+        },
+        {
+          "name": "400 — at без таймзоны",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=01A2B3&at=2026-01-01T00:00:00",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "01A2B3"},
+                {"key": "at", "value": "2026-01-01T00:00:00"}
+              ]
+            },
+            "description": "RFC 3339 требует timezone (Z или ±HH:MM). Ожидается 400."
+          }
+        },
+        {
+          "name": "400 — ca_id переполнение uint16",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=01A2B3&ca_id=70000",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "01A2B3"},
+                {"key": "ca_id", "value": "70000"}
+              ]
+            },
+            "description": "ca_id ограничен uint16 (0–65535). 70000 — overflow. Ожидается 400."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Request ID propagation",
+      "item": [
+        {
+          "name": "X-Request-ID echoed back",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "X-Request-ID",
+                "value": "manual-test-abc123",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/check?serial=01A2B3",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "check"],
+              "query": [
+                {"key": "serial", "value": "01A2B3"}
+              ]
+            },
+            "description": "X-Request-ID из запроса должен быть echoed в response header и попадать в логи как request_id."
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,224 @@
+openapi: 3.0.3
+info:
+  title: cert-check-service
+  description: |
+    Сервис проверки статуса сертификатов по серийному номеру.
+
+    Возвращает один из четырёх статусов: `valid`, `not_found`, `expired`, `revoked`.
+    Все бизнес-ответы — HTTP 200 (включая `not_found`, который **не** возвращает 404).
+
+    Подробное описание архитектуры — в [DESIGN.md](../DESIGN.md).
+    Соответствие условиям задания — в [README.md](../README.md#соответствие-taskmd).
+  version: 1.0.0
+  contact:
+    name: dukaev
+    email: dukaev999@gmail.com
+  license:
+    name: Internal
+    url: https://example.com/internal
+
+servers:
+  - url: http://localhost:8080
+    description: Local development
+
+tags:
+  - name: certificates
+    description: Проверка статуса сертификатов
+  - name: operational
+    description: Liveness/readiness probes для k8s
+
+paths:
+  /healthz:
+    get:
+      tags: [operational]
+      summary: Liveness probe
+      description: |
+        Всегда возвращает 200, если процесс жив (не deadlocked).
+        Не зависит от состояния backend — Redis blip или Postgres failure НЕ должны
+        вызывать рестарт пода через kubelet.
+      responses:
+        '200':
+          description: Процесс жив
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /readyz:
+    get:
+      tags: [operational]
+      summary: Readiness probe
+      description: |
+        Возвращает 200 только если backend (`Store.Ping(ctx)`) отвечает успешно.
+        503 — pod выводится из rotation kubelet'ом, но не рестартуется.
+        В Phase 1 (in-memory) — всегда 200. В Phase 2 (Postgres) — `SELECT 1`.
+      responses:
+        '200':
+          description: Готов обслуживать трафик
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ready
+        '503':
+          description: Backend недоступен
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "not ready: postgres down"
+
+  /api/v1/check:
+    get:
+      tags: [certificates]
+      summary: Проверить статус сертификата
+      description: |
+        Проверяет, действителен ли сертификат с указанным серийным номером
+        в указанный момент времени.
+
+        **Правила проверки** (порядок важен):
+        1. Если серийник отсутствует в хранилище → `not_found`
+        2. Если `checkTime` вне окна `[NotBefore, NotAfter]` (включительно) → `expired`
+        3. Если `RevokedAt != nil && checkTime >= RevokedAt` → `revoked`
+        4. Иначе → `valid`
+
+        `not_found`, `expired`, `revoked` — все возвращаются с HTTP 200
+        (это бизнес-ответы, не ошибки HTTP).
+      parameters:
+        - $ref: '#/components/parameters/Serial'
+        - $ref: '#/components/parameters/At'
+        - $ref: '#/components/parameters/CaID'
+      responses:
+        '200':
+          description: Результат проверки
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckResponse'
+              examples:
+                valid:
+                  summary: Валидный сертификат
+                  value:
+                    serial: "01A2B3"
+                    valid: true
+                    reason: ""
+                expired:
+                  summary: Истёкший
+                  value:
+                    serial: "E0E0E0E0"
+                    valid: false
+                    reason: "expired"
+                revoked:
+                  summary: Отозванный
+                  value:
+                    serial: "DEADBEEF"
+                    valid: false
+                    reason: "revoked"
+                not_found:
+                  summary: Не найден (200, не 404!)
+                  value:
+                    serial: "ABCD"
+                    valid: false
+                    reason: "not_found"
+        '400':
+          description: Невалидный запрос
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                missing_serial:
+                  summary: serial обязательный
+                  value:
+                    error: "serial: required"
+                non_hex:
+                  summary: не-hex символы в serial
+                  value:
+                    error: "serial: not hex: encoding/hex: invalid byte: U+004E 'N'"
+                too_long:
+                  summary: serial > 40 hex chars
+                  value:
+                    error: "serial: too long: 42 chars (max 40, RFC 5280)"
+                bad_at:
+                  summary: at не RFC 3339
+                  value:
+                    error: 'at: not RFC3339: parsing time "2026-01-01"'
+        '405':
+          description: Метод не GET
+
+components:
+  parameters:
+    Serial:
+      name: serial
+      in: query
+      required: true
+      description: |
+        Серийный номер сертификата в hex.
+        Регистронезависимый, нормализуется к upper-case в ответе.
+        Длина — чётная, ≤ 40 hex chars (RFC 5280 §4.1.2.2 ограничивает 20 байтами).
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F]{2,40}$'
+        minLength: 2
+        maxLength: 40
+        example: "01A2B3"
+
+    At:
+      name: at
+      in: query
+      required: false
+      description: |
+        Момент времени, на который проверяется статус.
+        Формат — RFC 3339 с timezone (Z или ±HH:MM).
+        Если не указан, используется серверное `time.Now().UTC()`.
+      schema:
+        type: string
+        format: date-time
+        example: "2026-01-01T00:00:00Z"
+
+    CaID:
+      name: ca_id
+      in: query
+      required: false
+      description: |
+        ID удостоверяющего центра. Серийник уникален только в пределах УЦ —
+        для multi-CA setup укажите конкретный.
+        По умолчанию 0 (single-CA семантика).
+      schema:
+        type: integer
+        format: uint16
+        minimum: 0
+        maximum: 65535
+        default: 0
+        example: 42
+
+  schemas:
+    CheckResponse:
+      type: object
+      required: [serial, valid, reason]
+      properties:
+        serial:
+          type: string
+          description: Серийник в upper-case hex (echoed обратно).
+          example: "01A2B3"
+        valid:
+          type: boolean
+          description: Действителен ли сертификат на указанный момент.
+        reason:
+          type: string
+          description: |
+            Пустая строка, если `valid: true`. Иначе — причина.
+            Поле всегда присутствует (НЕ `omitempty`).
+          enum: ["", "not_found", "expired", "revoked"]
+          example: ""
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Описание ошибки.
+          example: "serial: required"
