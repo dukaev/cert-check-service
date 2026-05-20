@@ -29,13 +29,19 @@ func New(store storage.Store, clock Clock) *Handler {
 	return &Handler{Store: store, Clock: clock}
 }
 
-// Response is the JSON shape returned by /api/v1/check.
+// Response is the JSON shape returned by /api/v1/check on success.
 // `reason` is intentionally NOT omitempty — the spec requires it as an empty string when valid.
 // Serial is hex-encoded for the wire (storage layer uses []byte).
 type Response struct {
 	Serial string `json:"serial"`
 	Valid  bool   `json:"valid"`
 	Reason string `json:"reason"`
+}
+
+// ErrorResponse is the JSON body for 4xx/5xx — keeps the contract uniform
+// instead of plain-text errors from http.Error.
+type ErrorResponse struct {
+	Error string `json:"error"`
 }
 
 // parsedRequest holds the validated query parameters.
@@ -49,7 +55,7 @@ type parsedRequest struct {
 func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 	req, err := parseRequest(r, h.Clock)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		writeJSON(w, http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 		return
 	}
 
@@ -66,7 +72,7 @@ func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		http.Error(w, "internal error", http.StatusInternalServerError)
+		writeJSON(w, http.StatusInternalServerError, ErrorResponse{Error: "internal error"})
 		return
 	}
 
