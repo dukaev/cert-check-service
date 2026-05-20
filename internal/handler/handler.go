@@ -42,13 +42,16 @@ type parsedRequest struct {
 // Check handles GET /api/v1/check.
 // TODO(part-1): implement.
 func (h *Handler) Check(w http.ResponseWriter, r *http.Request) {
-	http.Error(w, "not implemented", http.StatusNotImplemented)
+	_, _ = parseRequest(r, h.Clock)
+	writeJSON(w, http.StatusNotImplemented, Response{Reason: "TODO"})
 }
 
 // parseRequest validates and normalises query params.
 // TODO(part-1): implement (delegates to parseSerial + parseAt).
 func parseRequest(r *http.Request, clock Clock) (parsedRequest, error) {
-	return parsedRequest{}, errors.New("TODO")
+	serial, _ := parseSerial(r.URL.Query().Get("serial"))
+	at, _ := parseAt(r.URL.Query().Get("at"), clock)
+	return parsedRequest{serial: serial, at: at}, errors.New("TODO")
 }
 
 // parseSerial validates a hex serial number.

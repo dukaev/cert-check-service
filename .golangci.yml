@@ -1,0 +1,46 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck      # unchecked errors
+    - govet         # vet checks
+    - ineffassign   # ineffective assignments
+    - staticcheck   # high-signal static analysis
+    - unused        # dead code
+    - misspell      # typos in comments / strings
+    - errorlint     # error wrapping correctness
+    - unconvert     # unnecessary type conversions
+    - bodyclose     # http.Response.Body closed
+    - nilerr        # nil error vs non-nil return mismatches
+
+  settings:
+    staticcheck:
+      checks:
+        - all
+        - "-ST1000"   # missing package doc — not needed for internal pkgs
+    misspell:
+      locale: US
+
+  exclusions:
+    rules:
+      # Tests legitimately discard errors and call unused helpers.
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unused
+      # Stubs are intentionally minimal until Part 1 lands.
+      - path: internal/(checker|handler|storage)/.*\.go
+        text: "TODO"
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/dukaev/cert-check-service

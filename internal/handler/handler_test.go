@@ -112,11 +112,11 @@ func TestCheck_Expired(t *testing.T) {
 func TestCheck_BadRequest(t *testing.T) {
 	mux := newTestMux(t)
 	cases := []string{
-		"/api/v1/check",                                // serial missing
-		"/api/v1/check?serial=",                        // serial empty
-		"/api/v1/check?serial=01XZ",                    // non-hex
-		"/api/v1/check?serial=01A2B3&at=yesterday",     // bad at
-		"/api/v1/check?serial=01A2B3&at=2026-01-01",    // not RFC3339
+		"/api/v1/check",                             // serial missing
+		"/api/v1/check?serial=",                     // serial empty
+		"/api/v1/check?serial=01XZ",                 // non-hex
+		"/api/v1/check?serial=01A2B3&at=yesterday",  // bad at
+		"/api/v1/check?serial=01A2B3&at=2026-01-01", // not RFC3339
 	}
 	for _, path := range cases {
 		t.Run(path, func(t *testing.T) {
